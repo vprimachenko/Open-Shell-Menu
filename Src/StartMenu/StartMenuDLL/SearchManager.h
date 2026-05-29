@@ -41,15 +41,18 @@ public:
 		{
 			search.Clone(cat.search);
 			categoryHash=cat.categoryHash;
+			resultCount=cat.resultCount;
 			name=cat.name;
 			items=cat.items;
 		}
 		CAbsolutePidl search;
 		unsigned int categoryHash;
+		int resultCount=0;
 		CString name;
 		struct Item
 		{
 			CString name;
+			CString path;
 			CAbsolutePidl pidl;
 		};
 		std::vector<Item> items;
@@ -133,6 +136,7 @@ private:
 		bool bUseRanks;
 		bool bNoCommonFolders;
 		bool bPinnedFolder;
+		int searchProvider;
 		DWORD searchTime;
 		CString searchText;
 		CString autoCompletePath;
@@ -173,6 +177,7 @@ private:
 	bool AddSearchItem( IShellItem *pItem, const wchar_t *name, int flags, TItemCategory category, SearchRequest &searchRequest );
 	void CollectSearchItems( IShellItem *pFolder, int flags, TItemCategory category, SearchRequest &searchRequest );
 	void CollectIndexItems( IShellItem *pFolder, int flags, TItemCategory category, const wchar_t *groupName );
+	bool SearchEverythingFiles( const SearchRequest &searchRequest );
 
 	enum TLock
 	{
@@ -263,3 +268,5 @@ private:
 extern CSearchManager g_SearchManager;
 
 bool HasSearchService( void );
+bool HasFileSearchProvider( void );
+bool HasFileSearchProvider( int searchProvider );

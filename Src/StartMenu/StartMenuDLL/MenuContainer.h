@@ -469,6 +469,7 @@ private:
 		TMenuID id; // if pStdItem!=NULL, this is pStdItem->id. otherwise it can only be MENU_NO, MENU_SEPARATOR, MENU_EMPTY or MENU_EMPTY_TOP
 		const StdMenuItem *pStdItem; // NULL if not a standard menu item
 		CString name;
+		CString searchPath;
 		unsigned int nameHash;
 		const CItemManager::ItemInfo *pItemInfo;
 		MenuSkin::TItemDrawType drawType;
@@ -695,7 +696,9 @@ private:
 	{
 		SearchItem( const CString &_name, const CItemManager::ItemInfo *_info ) { name=_name; info=_info; }
 		SearchItem( const CItemManager::ItemInfo *_info ) { info=_info; }
+		SearchItem( const CString &_name, const CString &_path ) { name=_name; path=_path; info=NULL; }
 		CString name;
+		CString path;
 		const CItemManager::ItemInfo *info;
 	};
 

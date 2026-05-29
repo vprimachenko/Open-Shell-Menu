@@ -941,6 +941,13 @@ BEGIN
     IDS_SEARCH_EVERYWHERE   "Search all indexed locations"
     IDS_SEARCH_EVERYWHERE_TIP 
                             "When this is checked, the search for files will look in all indexed folders. Otherwise only libraries and the Desktop will be searched"
+    IDS_SEARCH_PROVIDER     "Default search implementation"
+    IDS_SEARCH_PROVIDER_TIP "Select which search implementation is used for file and folder results"
+    IDS_SEARCH_PROVIDER_WINDOWS "Windows Search"
+    IDS_SEARCH_PROVIDER_WINDOWS_TIP "Use the Windows Search index for file and folder results"
+    IDS_SEARCH_PROVIDER_EVERYTHING "Everything"
+    IDS_SEARCH_PROVIDER_EVERYTHING_TIP
+                            "Use voidtools Everything for file and folder results. Everything must be running"
     IDS_SEARCH_INTERNET     "Search the Internet"
     IDS_SEARCH_INTERNET_TIP "When this is checked, the start menu will have an option to search the Internet"
     IDS_NO_RECENT           "Don't show"

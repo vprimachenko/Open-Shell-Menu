@@ -1494,6 +1494,18 @@ void CMenuContainer::ActivateItem( int index, TActivateType type, const POINT *p
 		return;
 	}
 
+	if (!pItemPidl1 && !item.searchPath.IsEmpty() && (type==ACTIVATE_EXECUTE || type==ACTIVATE_MENU || type==ACTIVATE_RENAME || type==ACTIVATE_DELETE || type==ACTIVATE_PROPERTIES))
+		pItemPidl1.Attach(ILCreateFromPath(item.searchPath));
+	if (!pItemPidl1 && !item.searchPath.IsEmpty() && type==ACTIVATE_EXECUTE)
+	{
+		LockSetForegroundWindow(LSFW_UNLOCK);
+		FadeOutItem(index);
+		CloseSubMenus(CLOSE_POST,NULL);
+		PlayMenuSound(SOUND_COMMAND);
+		ShellExecute(NULL,NULL,item.searchPath,NULL,NULL,SW_SHOWNORMAL);
+		return;
+	}
+
 	bool bKeepOpen=(type==ACTIVATE_EXECUTE) && bShift && !bCtrl && (!item.bMetroLink || GetWinVersion()>=WIN_VER_WIN10);
 	bool bTrackRecent=false;
 	if (s_RecentPrograms!=RECENT_PROGRAMS_NONE)

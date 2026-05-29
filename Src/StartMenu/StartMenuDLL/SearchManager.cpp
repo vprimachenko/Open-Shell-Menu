@@ -28,6 +28,208 @@ const CLSID CLSID_CSearchManager2={0x7D096C5F,0xAC08,0x4f1f,{0xBE,0xB7,0x5C,0x22
 const int RANK_LIST_VERSION=1;
 const int RANK_LIST_SIZE=256;
 
+namespace
+{
+	const wchar_t *EVERYTHING_IPC_WNDCLASS=L"EVERYTHING_TASKBAR_NOTIFICATION";
+	const wchar_t *EVERYTHING_IPC_REPLY_WNDCLASS=L"OpenShellEverythingIpcReply";
+	const DWORD EVERYTHING_IPC_QUERY_COMPLETE=0x4F534546; // OSEF
+	const DWORD EVERYTHING_IPC_MATCHPATH=0x00000004;
+	const DWORD EVERYTHING_IPC_COPYDATAQUERYW=2;
+	const DWORD EVERYTHING_IPC_FOLDER=0x00000001;
+	const DWORD EVERYTHING_IPC_DRIVE=0x00000002;
+	const DWORD EVERYTHING_IPC_TIMEOUT=5000;
+
+#pragma pack(push,1)
+	struct EverythingIpcQueryW
+	{
+		DWORD reply_hwnd;
+		DWORD reply_copydata_message;
+		DWORD search_flags;
+		DWORD offset;
+		DWORD max_results;
+		wchar_t search_string[1];
+	};
+
+	struct EverythingIpcItemW
+	{
+		DWORD flags;
+		DWORD filename_offset;
+		DWORD path_offset;
+	};
+
+	struct EverythingIpcListW
+	{
+		DWORD totfolders;
+		DWORD totfiles;
+		DWORD totitems;
+		DWORD numfolders;
+		DWORD numfiles;
+		DWORD numitems;
+		DWORD offset;
+		EverythingIpcItemW items[1];
+	};
+#pragma pack(pop)
+
+	struct EverythingIpcContext
+	{
+		bool complete;
+		bool success;
+		int totalItems;
+		std::vector<CString> paths;
+	};
+
+	static const wchar_t *EverythingIpcItemFilename( const EverythingIpcListW *pList, const EverythingIpcItemW *pItem )
+	{
+		return (const wchar_t*)((const char*)pList+pItem->filename_offset);
+	}
+
+	static const wchar_t *EverythingIpcItemPath( const EverythingIpcListW *pList, const EverythingIpcItemW *pItem )
+	{
+		return (const wchar_t*)((const char*)pList+pItem->path_offset);
+	}
+
+	static LRESULT CALLBACK EverythingIpcWndProc( HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam )
+	{
+		if (uMsg==WM_COPYDATA)
+		{
+			COPYDATASTRUCT *pCopyData=(COPYDATASTRUCT*)lParam;
+			EverythingIpcContext *pContext=(EverythingIpcContext*)GetWindowLongPtr(hWnd,GWLP_USERDATA);
+			if (pContext && pCopyData && pCopyData->dwData==EVERYTHING_IPC_QUERY_COMPLETE && pCopyData->lpData)
+			{
+				const EverythingIpcListW *pList=(const EverythingIpcListW*)pCopyData->lpData;
+				pContext->totalItems=pList->totitems;
+				pContext->paths.reserve(pList->numitems);
+				for (DWORD i=0;i<pList->numitems;i++)
+				{
+					const EverythingIpcItemW &item=pList->items[i];
+					const wchar_t *filename=EverythingIpcItemFilename(pList,&item);
+					const wchar_t *path=EverythingIpcItemPath(pList,&item);
+					CString fullPath;
+					if ((item.flags&EVERYTHING_IPC_DRIVE) || !path || !*path)
+					{
+						fullPath=filename;
+						if ((item.flags&EVERYTHING_IPC_DRIVE) && fullPath.GetLength()==2 && fullPath[1]==':')
+							fullPath+=L"\\";
+					}
+					else
+					{
+						fullPath=path;
+						if (!fullPath.IsEmpty() && fullPath[fullPath.GetLength()-1]!='\\')
+							fullPath+=L"\\";
+						fullPath+=filename;
+					}
+					if (!fullPath.IsEmpty())
+						pContext->paths.push_back(fullPath);
+				}
+				pContext->success=true;
+				pContext->complete=true;
+				return TRUE;
+			}
+		}
+		return DefWindowProc(hWnd,uMsg,wParam,lParam);
+	}
+
+	static bool RegisterEverythingIpcReplyClass( void )
+	{
+		WNDCLASSEX wc={sizeof(wc)};
+		wc.lpfnWndProc=EverythingIpcWndProc;
+		wc.hInstance=GetModuleHandle(NULL);
+		wc.lpszClassName=EVERYTHING_IPC_REPLY_WNDCLASS;
+		if (RegisterClassEx(&wc))
+			return true;
+		return GetLastError()==ERROR_CLASS_ALREADY_EXISTS;
+	}
+
+	static bool HasEverythingSearch( void )
+	{
+		return FindWindow(EVERYTHING_IPC_WNDCLASS,NULL)!=NULL;
+	}
+
+	static DWORD GetEverythingSearchFlags( const CString &searchText )
+	{
+		return (wcspbrk(searchText,L"\\/:")!=NULL)?EVERYTHING_IPC_MATCHPATH:0;
+	}
+
+	static bool QueryEverything( const CString &searchText, std::vector<CString> &paths, int &totalItems )
+	{
+		HWND hEverything=FindWindow(EVERYTHING_IPC_WNDCLASS,NULL);
+		if (!hEverything)
+			return false;
+		if (!RegisterEverythingIpcReplyClass())
+			return false;
+
+		EverythingIpcContext context={false,false,0};
+		HWND hReply=CreateWindowEx(0,EVERYTHING_IPC_REPLY_WNDCLASS,L"",0,0,0,0,0,HWND_MESSAGE,NULL,GetModuleHandle(NULL),NULL);
+		if (!hReply)
+			return false;
+		SetWindowLongPtr(hReply,GWLP_USERDATA,(LONG_PTR)&context);
+
+		DWORD len=searchText.GetLength();
+		DWORD size=sizeof(EverythingIpcQueryW)-sizeof(wchar_t)+(len+1)*sizeof(wchar_t);
+		std::vector<BYTE> buffer(size);
+		EverythingIpcQueryW *pQuery=(EverythingIpcQueryW*)&buffer[0];
+		pQuery->reply_hwnd=(DWORD)(DWORD_PTR)hReply;
+		pQuery->reply_copydata_message=EVERYTHING_IPC_QUERY_COMPLETE;
+		pQuery->search_flags=GetEverythingSearchFlags(searchText);
+		pQuery->offset=0;
+		pQuery->max_results=0xFFFFFFFF;
+		memcpy(pQuery->search_string,(const wchar_t*)searchText,(len+1)*sizeof(wchar_t));
+
+		COPYDATASTRUCT copyData={0};
+		copyData.dwData=EVERYTHING_IPC_COPYDATAQUERYW;
+		copyData.cbData=size;
+		copyData.lpData=pQuery;
+
+		DWORD_PTR result=0;
+		LRESULT sent=SendMessageTimeout(hEverything,WM_COPYDATA,(WPARAM)hReply,(LPARAM)&copyData,SMTO_ABORTIFHUNG,EVERYTHING_IPC_TIMEOUT,&result);
+		if (sent && result)
+		{
+			DWORD start=GetTickCount();
+			while (!context.complete)
+			{
+				DWORD elapsed=GetTickCount()-start;
+				if (elapsed>=EVERYTHING_IPC_TIMEOUT)
+					break;
+				DWORD wait=MsgWaitForMultipleObjects(0,NULL,FALSE,EVERYTHING_IPC_TIMEOUT-elapsed,QS_ALLINPUT);
+				if (wait==WAIT_TIMEOUT)
+					break;
+
+				MSG msg;
+				while (PeekMessage(&msg,NULL,0,0,PM_REMOVE))
+				{
+					TranslateMessage(&msg);
+					DispatchMessage(&msg);
+					if (context.complete)
+						break;
+				}
+			}
+		}
+
+		SetWindowLongPtr(hReply,GWLP_USERDATA,0);
+		DestroyWindow(hReply);
+		if (!context.complete || !context.success)
+			return false;
+		paths.swap(context.paths);
+		totalItems=context.totalItems;
+		return true;
+	}
+
+	static bool IsEverythingSearchProvider( void )
+	{
+		return GetSettingInt(L"SearchProvider")==SEARCH_PROVIDER_EVERYTHING;
+	}
+
+	static bool LaunchEverythingSearch( const CString &searchText )
+	{
+		CString escaped=searchText;
+		escaped.Replace(L"\"",L"\\\"");
+		CString params;
+		params.Format(L"-search \"%s\"",(const wchar_t*)escaped);
+		HINSTANCE res=ShellExecute(NULL,NULL,L"Everything.exe",params,NULL,SW_SHOWNORMAL);
+		return (INT_PTR)res>32;
+	}
+}
+
 CSearchManager::CSearchManager( void )
 {
 	m_bInitialized=false;
@@ -128,6 +330,7 @@ void CSearchManager::BeginSearch( const CString &searchText )
 		m_SearchRequest.bUseRanks=GetSettingBool(L"SearchTrack");
 		m_SearchRequest.bNoCommonFolders=(SHRestricted(REST_NOCOMMONGROUPS)!=0);
 		m_SearchRequest.bPinnedFolder=(GetSettingInt(L"PinnedPrograms")==PINNED_PROGRAMS_PINNED);
+		m_SearchRequest.searchProvider=GetSettingInt(L"SearchProvider");
 		m_SearchRequest.searchText=searchText;
 		m_SearchRequest.autoCompletePath=ParseAutoCompletePath(searchText);
 	}
@@ -563,6 +766,45 @@ bool CSearchManager::SearchScope::ParseSearchConnector( const wchar_t *fname )
 	return false;
 }
 
+bool CSearchManager::SearchEverythingFiles( const SearchRequest &searchRequest )
+{
+	std::vector<CString> paths;
+	int totalItems=0;
+	if (!QueryEverything(searchRequest.searchText,paths,totalItems))
+		return false;
+
+	if (searchRequest.requestId!=m_LastRequestId)
+		return true;
+
+	SearchCategory category;
+	category.name=FindTranslation(L"Search.CategoryFiles",L"Files");
+	category.categoryHash=CATEGORY_FILE|(CalcFNVHash(L"Files")&~CATEGORY_MASK);
+	category.resultCount=totalItems;
+	category.items.reserve(paths.size());
+
+	for (std::vector<CString>::const_iterator it=paths.begin();it!=paths.end();++it)
+	{
+		if (searchRequest.requestId!=m_LastRequestId)
+			return true;
+
+		SearchCategory::Item item;
+		const wchar_t *name=PathFindFileName(*it);
+		if (name && *name)
+			item.name=name;
+		item.path=*it;
+
+		category.items.push_back(item);
+	}
+
+	if (!category.items.empty())
+	{
+		Lock lock(this,LOCK_DATA);
+		if (searchRequest.requestId==m_LastRequestId)
+			m_IndexedItems.push_back(category);
+	}
+	return true;
+}
+
 void CSearchManager::SearchThread( void )
 {
 	HANDLE events[2]={m_SearchEvent,m_ExitEvent};
@@ -790,7 +1032,11 @@ void CSearchManager::SearchThread( void )
 			continue;
 		}
 
-		if (searchRequest.requestId!=m_LastRequestId || (!searchRequest.bSearchFiles && !searchRequest.bSearchMetroSettings))
+		bool bSearchFilesWithWindows=searchRequest.bSearchFiles;
+		if (searchRequest.bSearchFiles && searchRequest.searchProvider==SEARCH_PROVIDER_EVERYTHING)
+			bSearchFilesWithWindows=!SearchEverythingFiles(searchRequest);
+
+		if (searchRequest.requestId!=m_LastRequestId || (!bSearchFilesWithWindows && !searchRequest.bSearchMetroSettings))
 			continue;
 		CMenuContainer::RefreshSearch();
 		searchRequest.searchTime=GetTickCount();
@@ -810,7 +1056,7 @@ void CSearchManager::SearchThread( void )
 				scope.categoryHash=CATEGORY_METROSETTING;
 				scope.roots.push_back(L"FILE:");
 			}
-			if (searchRequest.bSearchFiles)
+			if (bSearchFilesWithWindows)
 			{
 				// prepare roots
 				CComPtr<IShellLibrary> pLibrary;
@@ -1263,6 +1509,7 @@ void CSearchManager::SearchThread( void )
 						pCategory=&*m_IndexedItems.rbegin();
 						pCategory->name=it->name;
 						pCategory->categoryHash=it->categoryHash;
+						pCategory->resultCount=it->resultCount;
 						pCategory->search.Clone(it->search);
 					}
 					while (command.MoveNext()==S_OK)
@@ -1501,6 +1748,12 @@ void CSearchManager::LaunchExternalSearch( PIDLIST_ABSOLUTE root, unsigned int c
 	Assert(GetCurrentThreadId()==m_MainThreadId);
 	if (searchText.IsEmpty()) return;
 
+	if (IsEverythingSearchProvider() && !root && (categoryHash==CATEGORY_INVALID || (categoryHash&CATEGORY_MASK)==CATEGORY_FILE))
+	{
+		if (LaunchEverythingSearch(searchText))
+			return;
+	}
+
 	CComPtr<IConditionFactory2> pConditionFactory;
 	pConditionFactory.CoCreateInstance(CLSID_ConditionFactory);
 	if (!pConditionFactory) return;
@@ -1701,4 +1954,16 @@ bool HasSearchService( void )
 		CloseServiceHandle(hManager);
 	}
 	return bWSearch;
+}
+
+bool HasFileSearchProvider( void )
+{
+	return HasFileSearchProvider(GetSettingInt(L"SearchProvider"));
+}
+
+bool HasFileSearchProvider( int searchProvider )
+{
+	if (searchProvider==SEARCH_PROVIDER_EVERYTHING && HasEverythingSearch())
+		return true;
+	return HasSearchService();
 }

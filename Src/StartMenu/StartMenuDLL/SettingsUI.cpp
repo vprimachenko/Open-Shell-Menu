@@ -4382,6 +4382,9 @@ CSetting g_Settings[]={
 		{L"SearchKeywords",CSetting::TYPE_BOOL,IDS_SEARCH_KEYWORDS,IDS_SEARCH_KEYWORDS_TIP,1,0,L"#SearchPrograms",L"SearchPrograms"},
 		{L"SearchSubWord",CSetting::TYPE_BOOL,IDS_SUB_WORD,IDS_SUB_WORD_TIP,1,0,L"#SearchPrograms",L"SearchPrograms"},
 	{L"SearchFiles",CSetting::TYPE_BOOL,IDS_SEARCH_FILES,IDS_SEARCH_FILES_TIP,1,0,L"SearchBox"},
+		{L"SearchProvider",CSetting::TYPE_INT,IDS_SEARCH_PROVIDER,IDS_SEARCH_PROVIDER_TIP,SEARCH_PROVIDER_WINDOWS,0,L"#SearchFiles",L"SearchFiles"},
+			{L"WindowsSearch",CSetting::TYPE_RADIO,IDS_SEARCH_PROVIDER_WINDOWS,IDS_SEARCH_PROVIDER_WINDOWS_TIP},
+			{L"Everything",CSetting::TYPE_RADIO,IDS_SEARCH_PROVIDER_EVERYTHING,IDS_SEARCH_PROVIDER_EVERYTHING_TIP},
 		{L"SearchContents",CSetting::TYPE_BOOL,IDS_SEARCH_CONTENTS,IDS_SEARCH_CONTENTS_TIP,1,0,L"#SearchFiles",L"SearchFiles"},
 		{L"SearchCategories",CSetting::TYPE_BOOL,IDS_SEARCH_CATEGORIES,IDS_SEARCH_CATEGORIES_TIP,1,0,L"#SearchFiles",L"SearchFiles"},
 	{L"SearchInternet",CSetting::TYPE_BOOL,IDS_SEARCH_INTERNET,IDS_SEARCH_INTERNET_TIP,1,0,L"SearchBox"},
@@ -5005,8 +5008,12 @@ void UpdateSettings( void )
 		FindSetting(L"WinKey")[5].flags|=CSetting::FLAG_HIDDEN;
 	}
 
-	bool bWSearch=HasSearchService();
-	UpdateSettingText(L"SearchFiles",-1,bWSearch?IDS_SEARCH_FILES_TIP:IDS_SEARCH_FILES_TIP2,!bWSearch);
+	int searchProvider=SEARCH_PROVIDER_WINDOWS;
+	const CSetting *pSearchProvider=FindSetting(L"SearchProvider");
+	if (pSearchProvider && pSearchProvider->value.vt==VT_I4)
+		searchProvider=pSearchProvider->value.intVal;
+	bool bFileSearch=HasFileSearchProvider(searchProvider);
+	UpdateSettingText(L"SearchFiles",-1,bFileSearch?IDS_SEARCH_FILES_TIP:IDS_SEARCH_FILES_TIP2,!bFileSearch);
 
 	UpdateSetting(L"MenuItems1",CComVariant(g_DefaultStartMenu1),false);
 	UpdateSetting(L"MenuItems2",CComVariant(g_DefaultStartMenu2),false);

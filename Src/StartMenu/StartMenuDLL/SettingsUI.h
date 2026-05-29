@@ -63,6 +63,12 @@ enum TSearchBoxType
 	SEARCHBOX_TAB,
 };
 
+enum TSearchProvider
+{
+	SEARCH_PROVIDER_WINDOWS,
+	SEARCH_PROVIDER_EVERYTHING,
+};
+
 enum TTaskbarLook
 {
 	TASKBAR_OPAQUE,

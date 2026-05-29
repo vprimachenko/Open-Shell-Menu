@@ -2663,11 +2663,25 @@ int CMenuContainer::AddSearchItems( const std::vector<SearchItem> &items, const 
 	for (std::vector<SearchItem>::const_iterator it=items.begin();it!=items.end();++it)
 	{
 		CComPtr<IShellItem> pItem;
-		if (FAILED(SHCreateItemFromIDList(it->info->GetPidl(),IID_IShellItem,(void**)&pItem)))
+		CString displayName;
+		if (it->info)
+		{
+			if (FAILED(SHCreateItemFromIDList(it->info->GetPidl(),IID_IShellItem,(void**)&pItem)))
+				continue;
+			CComString pName;
+			if (FAILED(pItem->GetDisplayName(categoryHash==CSearchManager::CATEGORY_AUTOCOMPLETE?SIGDN_PARENTRELATIVEEDITING:SIGDN_NORMALDISPLAY,&pName)))
+				continue;
+			displayName=pName;
+		}
+		else if (!it->path.IsEmpty())
+		{
+			displayName=PathFindFileName(it->path);
+			if (displayName.IsEmpty())
+				displayName=it->path;
+		}
+		else
 			continue;
 
-		CComString pName;
-		if (SUCCEEDED(pItem->GetDisplayName(categoryHash==CSearchManager::CATEGORY_AUTOCOMPLETE?SIGDN_PARENTRELATIVEEDITING:SIGDN_NORMALDISPLAY,&pName)))
 		{
 			if (bFirst)
 			{
@@ -2687,9 +2701,13 @@ int CMenuContainer::AddSearchItems( const std::vector<SearchItem> &items, const 
 			MenuItem item(MENU_NO);
 			item.categoryHash=categoryHash;
 			item.pItemInfo=it->info;
-			g_ItemManager.UpdateItemInfo(it->info,CItemManager::INFO_SMALL_ICON);
-			bool bMetroLink, bMetroApp;
+			if (it->info)
+				g_ItemManager.UpdateItemInfo(it->info,CItemManager::INFO_SMALL_ICON);
+			else
+				item.searchPath=it->path;
+			bool bMetroLink=false, bMetroApp=false;
 			CString metroName;
+			if (item.pItemInfo)
 			{
 				CItemManager::RWLock lock(&g_ItemManager,false,CItemManager::RWLOCK_ITEMS);
 				bMetroLink=item.pItemInfo->IsMetroLink();
@@ -2702,10 +2720,11 @@ int CMenuContainer::AddSearchItems( const std::vector<SearchItem> &items, const 
 			else if (bMetroLink && !metroName.IsEmpty())
 					item.SetName(metroName,false);
 			else
-				item.SetName(pName,(m_Options&CONTAINER_NOEXTENSIONS)!=0);
+				item.SetName(displayName,(m_Options&CONTAINER_NOEXTENSIONS)!=0);
 			item.bMetroLink=bMetroLink;
 			item.bMetroApp=bMetroApp;
-			item.pItem1=ILCloneFull(it->info->GetPidl());
+			if (it->info)
+				item.pItem1=ILCloneFull(it->info->GetPidl());
 			wchar_t name[_MAX_PATH];
 			Strcpy(name,_countof(name),item.name);
 			CharUpper(name);
@@ -2913,16 +2932,23 @@ bool CMenuContainer::InitSearchItems( void )
 		}
 		else
 		{
-			originalCount=(int)it->items.size();
+			originalCount=it->resultCount?it->resultCount:(int)it->items.size();
 			if (count>originalCount)
 				count=originalCount;
 			items.reserve(count);
 			for (int i=0;i<count;i++)
 			{
-				PIDLIST_ABSOLUTE pidl=it->items[i].pidl;
-				CComPtr<IShellItem> pItem;
-				if (SUCCEEDED(SHCreateItemFromIDList(pidl,IID_IShellItem,(void**)&pItem)))
-					items.push_back(SearchItem(it->items[i].name,g_ItemManager.GetItemInfo(pItem,pidl,0)));
+				if (!it->items[i].path.IsEmpty())
+				{
+					items.push_back(SearchItem(it->items[i].name,it->items[i].path));
+				}
+				else
+				{
+					PIDLIST_ABSOLUTE pidl=it->items[i].pidl;
+					CComPtr<IShellItem> pItem;
+					if (SUCCEEDED(SHCreateItemFromIDList(pidl,IID_IShellItem,(void**)&pItem)))
+						items.push_back(SearchItem(it->items[i].name,g_ItemManager.GetItemInfo(pItem,pidl,0)));
+				}
 			}
 			name=it->name;
 			++it;
@@ -6721,6 +6747,11 @@ bool CMenuContainer::GetDescription( int index, wchar_t *text, int size )
 	if ((item.categoryHash&CSearchManager::CATEGORY_MASK)==CSearchManager::CATEGORY_FILE)
 	{
 		// for search files show the path
+		if (!item.searchPath.IsEmpty())
+		{
+			Strcpy(text,size,item.searchPath);
+			return true;
+		}
 		if (item.pItemInfo)
 		{
 			bool bShowPath;
@@ -7436,7 +7467,7 @@ static void CreateStartScreenFile( const wchar_t *fname )
 bool CMenuContainer::HasMoreResults( void )
 {
 	if (s_HasMoreResults==-1)
-		s_HasMoreResults=(GetSettingBool(L"MoreResults") && GetSettingBool(L"SearchFiles") && HasSearchService())?1:0;
+		s_HasMoreResults=(GetSettingBool(L"MoreResults") && GetSettingBool(L"SearchFiles") && HasFileSearchProvider())?1:0;
 	return s_HasMoreResults!=0;
 }
 
