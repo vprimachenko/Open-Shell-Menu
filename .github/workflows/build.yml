@@ -53,7 +53,10 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
 
-          $requestedVersion = $env:REQUESTED_VERSION.Trim()
+          $requestedVersion = ''
+          if ($null -ne $env:REQUESTED_VERSION) {
+            $requestedVersion = $env:REQUESTED_VERSION.Trim()
+          }
           if ($requestedVersion) {
             if ($requestedVersion -notmatch '^\d+\.\d+\.\d+$') {
               throw "Version input must use X.Y.Z format. Found: '$requestedVersion'"
