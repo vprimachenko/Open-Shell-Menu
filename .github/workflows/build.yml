@@ -47,16 +47,23 @@ jobs:
       - name: Prepare version
         id: versioning
         shell: pwsh
-        env:
-          REQUESTED_VERSION: ${{ github.event.inputs.version || '' }}
-          SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           $ErrorActionPreference = 'Stop'
 
-          $requestedVersion = ''
-          if ($null -ne $env:REQUESTED_VERSION) {
-            $requestedVersion = $env:REQUESTED_VERSION.Trim()
+          $eventName = $env:GITHUB_EVENT_NAME
+          $event = $null
+          if ($env:GITHUB_EVENT_PATH -and (Test-Path $env:GITHUB_EVENT_PATH)) {
+            $event = Get-Content -Raw -Path $env:GITHUB_EVENT_PATH | ConvertFrom-Json
           }
+
+          $requestedVersion = ''
+          if ($eventName -eq 'workflow_dispatch' -and $event -and $event.inputs) {
+            $versionInput = $event.inputs.PSObject.Properties['version']
+            if ($versionInput) {
+              $requestedVersion = ([string]$versionInput.Value).Trim()
+            }
+          }
+
           if ($requestedVersion) {
             if ($requestedVersion -notmatch '^\d+\.\d+\.\d+$') {
               throw "Version input must use X.Y.Z format. Found: '$requestedVersion'"
@@ -78,11 +85,20 @@ jobs:
             $baseVersion = '{0}.{1}.{2}' -f $Matches.major, $Matches.minor, ([int]$Matches.patch + 1)
           }
 
-          if ($env:GITHUB_EVENT_NAME -eq "pull_request") {
-            $shortSha = $env:SOURCE_SHA.Substring(0, 7)
+          $sourceSha = $env:GITHUB_SHA
+          if ($eventName -eq 'pull_request' -and $event -and $event.pull_request.head.sha) {
+            $sourceSha = [string]$event.pull_request.head.sha
+          }
+
+          if (-not $sourceSha -or $sourceSha.Length -lt 7) {
+            throw 'Could not determine source commit SHA.'
+          }
+
+          if ($eventName -eq "pull_request") {
+            $shortSha = $sourceSha.Substring(0, 7)
             $finalVersion = "$baseVersion-pr-$shortSha"
-          } elseif ($env:GITHUB_EVENT_NAME -eq "push") {
-            $shortSha = $env:SOURCE_SHA.Substring(0, 7)
+          } elseif ($eventName -eq "push") {
+            $shortSha = $sourceSha.Substring(0, 7)
             $finalVersion = "$baseVersion-dev-$shortSha"
           } else {
             $finalVersion = $baseVersion
