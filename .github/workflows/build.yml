@@ -1,83 +1,125 @@
 name: Build
 
 permissions:
-  contents: read # Default to secure
+  contents: read
 
 on:
+  push:
+    branches:
+      - master
+    paths:
+      - 'Src/**'
+      - '.github/workflows/build.yml'
+
   pull_request:
     branches:
       - master
     paths:
       - 'Src/**'
-      - 'Localization/**'
       - '.github/workflows/build.yml'
 
-  workflow_dispatch:  # allows manual trigger for main/master
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Optional release version (X.Y.Z). Defaults to next patch after the latest vX.Y.Z tag.'
+        required: false
+        type: string
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:
+    name: Build installer
     runs-on: windows-2022
+    timeout-minutes: 120
     outputs:
-      new_version: ${{ steps.versioning.outputs.NEW_VERSION }}
+      new_version: ${{ steps.versioning.outputs.version }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
         with:
-          fetch-depth: 0 # Essential to see all tags
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
 
       - name: Prepare version
         id: versioning
         shell: pwsh
+        env:
+          REQUESTED_VERSION: ${{ github.event.inputs.version || '' }}
+          SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
-          # Fetch latest tag
-          $latestTag = git describe --tags --abbrev=0 2>$null
+          $ErrorActionPreference = 'Stop'
 
-          if ($latestTag -notmatch '^v\d+\.\d+\.\d+$') {
-            Write-Error "Error: Could not find a valid vX.Y.Z tag in history. Found: '$latestTag'"
-            exit 1
+          $requestedVersion = $env:REQUESTED_VERSION.Trim()
+          if ($requestedVersion) {
+            if ($requestedVersion -notmatch '^\d+\.\d+\.\d+$') {
+              throw "Version input must use X.Y.Z format. Found: '$requestedVersion'"
+            }
+
+            $baseVersion = $requestedVersion
+          } else {
+            $latestTag = git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname |
+              Where-Object { $_ -match '^v\d+\.\d+\.\d+$' } |
+              Select-Object -First 1
+            if (-not $latestTag) {
+              throw 'Could not find a valid vX.Y.Z tag in history.'
+            }
+
+            if ($latestTag -notmatch '^v(?<major>\d+)\.(?<minor>\d+)\.(?<patch>\d+)$') {
+              throw "Could not parse version tag '$latestTag'."
+            }
+
+            $baseVersion = '{0}.{1}.{2}' -f $Matches.major, $Matches.minor, ([int]$Matches.patch + 1)
           }
-          
-          # Parse and Increment
-          $version = [version]$latestTag.Substring(1)
-          $baseVersion = "$($version.Major).$($version.Minor).$($version.Build + 1)"
 
-          # Handle PR Suffix
-          if ("${{ github.event_name }}" -eq "pull_request") {
-            $shortSha = "${{ github.event.pull_request.head.sha }}".Substring(0, 7)
+          if ($env:GITHUB_EVENT_NAME -eq "pull_request") {
+            $shortSha = $env:SOURCE_SHA.Substring(0, 7)
             $finalVersion = "$baseVersion-pr-$shortSha"
+          } elseif ($env:GITHUB_EVENT_NAME -eq "push") {
+            $shortSha = $env:SOURCE_SHA.Substring(0, 7)
+            $finalVersion = "$baseVersion-dev-$shortSha"
           } else {
             $finalVersion = $baseVersion
           }
-          
-          # Export
-          "NEW_VERSION=$finalVersion" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
+          "version=$finalVersion" | Add-Content -Path $env:GITHUB_OUTPUT -Encoding utf8
           Write-Host "Building version: $finalVersion"
 
       - name: Build
         shell: cmd
         env:
-          APPVEYOR_BUILD_VERSION: ${{ steps.versioning.outputs.NEW_VERSION }}
+          APPVEYOR_BUILD_VERSION: ${{ steps.versioning.outputs.version }}
         run: Src\Setup\__MakeFinal.bat
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
         with:
-          name: OpenShell
+          name: OpenShell-${{ steps.versioning.outputs.version }}
           path: |
             Src/Setup/Final/
             !Src/Setup/Final/OpenShellLoc.zip
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
 
   release:
-    if: github.event_name == 'workflow_dispatch' # Only manual master builds
+    name: Create prerelease
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/master'
     needs: build
-    runs-on: ubuntu-latest # Cheaper/faster than windows for just uploading
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
-      contents: write # Elevate permissions ONLY for this job
+      actions: read
+      contents: write
     steps:
       - name: Download artifacts
         uses: actions/download-artifact@v8
         with:
-          name: OpenShell
+          name: OpenShell-${{ needs.build.outputs.new_version }}
+          path: release-assets
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v3
@@ -87,8 +129,8 @@ jobs:
           generate_release_notes: true
           prerelease: true
           files: |
-            OpenShellSetup*.exe
-            OpenShellSymbols_*.7z
-            Utility.exe
+            release-assets/OpenShellSetup*.exe
+            release-assets/OpenShellSymbols_*.7z
+            release-assets/Utility.exe
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
